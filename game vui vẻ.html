@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Snake Game — Updated Jumpscare Image</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#000; --panel:#121212; --accent:#00aaff; --danger:#ff3b3b; --joy-base:#1f1f1f; --joy-knob:#2ea6ff; }
+    html,body { height:100%; margin:0; background:var(--bg); display:flex; align-items:center; justify-content:center; font-family:system-ui,Segoe UI,Roboto,Arial;}
+    .container { position:relative; width:420px; user-select:none; -webkit-user-select:none; }
+    canvas { background:#111; border:3px solid #fff; display:block; width:400px; height:400px; image-rendering:pixelated; touch-action: none; }
+    .controls { display:flex; gap:8px; margin-top:8px; justify-content:center; }
+    button { background:var(--panel); color:#fff; border:1px solid rgba(255,255,255,0.06); padding:8px 12px; border-radius:6px; cursor:pointer; }
+    #score { position:absolute; top:8px; right:8px; color:#fff; background:rgba(0,0,0,0.5); padding:6px 10px; border-radius:6px; font-family:monospace; z-index:5;}
+    #level { position:absolute; top:8px; left:8px; color:#fff; background:rgba(0,0,0,0.5); padding:6px 10px; border-radius:6px; font-family:monospace; z-index:5;}
+
+    /* Joystick cluster positioned bottom-left - ALWAYS VISIBLE */
+    .joystick {
+      position: absolute;
+      left: 8px;
+      bottom: 8px;
+      width: 140px;
+      height: 140px;
+      z-index: 7;
+      touch-action: none;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      pointer-events: auto;
+    }
+    .joy-base {
+      width: 120px;
+      height: 120px;
+      background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.03), var(--joy-base));
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.06);
+      box-shadow: inset 0 6px 18px rgba(0,0,0,0.6);
+      position:relative;
+    }
+    .joy-knob {
+      position:absolute;
+      width:56px;
+      height:56px;
+      background: var(--joy-knob);
+      border-radius:50%;
+      left:50%;
+      top:50%;
+      transform: translate(-50%,-50%);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+      transition: transform 0.06s linear;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:#002b3d;
+      font-weight:700;
+      user-select:none;
+      -webkit-user-select:none;
+      pointer-events:none;
+    }
+    .joy-active .joy-knob { transition: none; }
+    @media(min-width:700px){
+      .joystick { width:110px; height:110px; left:10px; bottom:10px; }
+      .joy-base { width:94px; height:94px; }
+      .joy-knob { width:46px; height:46px; }
+    }
+
+    /* Scare overlay and flash */
+    #scareOverlay {
+      display:none;
+      position:fixed;
+      inset:0;
+      z-index:9999;
+      background:black;
+      align-items:center;
+      justify-content:center;
+    }
+    #scareOverlay img { width:100vw; height:100vh; object-fit:cover; animation:shake .28s infinite; }
+    @keyframes shake {
+      0% { transform: translate(0,0); }
+      25% { transform: translate(8px,-8px); }
+      50% { transform: translate(-8px,8px); }
+      75% { transform: translate(8px,8px); }
+      100% { transform: translate(-8px,-8px); }
+    }
+    #flash { display:none; position:fixed; inset:0; z-index:9997; background:white; opacity:0.9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="level">Level: 1</div>
+    <div id="score">Score: 0</div>
+    <canvas id="game" width="400" height="400" tabindex="0"></canvas>
+
+    <div class="controls">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn" disabled>Pause</button>
+      <button id="restartBtn" disabled>Restart</button>
+      <button id="muteToggle">🔊</button>
+      <button id="hideJoy" style="display:inline-block">Hide joystick</button>
+    </div>
+
+    <!-- Joystick (bottom-left) - always visible -->
+    <div class="joystick" id="joystick" aria-hidden="false">
+      <div class="joy-base" id="joyBase">
+        <div class="joy-knob" id="joyKnob">●</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+  <div id="scareOverlay"><img id="scareImg" src="" alt="Scare"></div>
+  <audio id="screamA" preload="auto"></audio>
+
+<script>
+/*
+  Updated per your request:
+  - Removed preview UI.
+  - Replaced jumpscare image with the URL you provided (genk.mediacdn.vn...).
+  - Audio (mp3) remains the user-provided file and is preloaded.
+  - Joystick, keyboard, start/pause/restart, mute behavior unchanged.
+*/
+
+/* ---------- ASSETS ---------- */
+// The jumpscare image now uses the provided URL (single image)
+const scareImages = [
+  "https://genk.mediacdn.vn/2018/6/15/9-15290319911361532092101.jpg"
+];
+
+// scream sounds: your earlier mp3 plus fallbacks
+const screamSounds = [
+  "https://www.myinstants.com/media/sounds/go-to-sleep-jeff-the-killer.mp3",
+  "https://www.myinstants.com/media/sounds/movie_1.mp3",
+  "https://www.myinstants.com/media/sounds/creepy-scream.mp3"
+];
+
+const preloadedImages = [];
+const preloadedAudios = [];
+
+// Preload the chosen image
+scareImages.forEach(src => {
+  try {
+    const img = new Image();
+    img.src = src;
+    preloadedImages.push(img);
+  } catch(e) { console.warn('Image preload failed', src, e); }
+});
+
+// Preload audios for direct files
+screamSounds.forEach(src => {
+  if (/\.(mp3|ogg|wav)(\?|$)/i.test(src)) {
+    try {
+      const a = new Audio();
+      a.src = src;
+      a.preload = 'auto';
+      preloadedAudios.push(a);
+    } catch(e) {
+      console.warn('Audio preload failed:', src, e);
+    }
+  } else {
+    console.warn('Skipping non-direct-audio preload:', src);
+  }
+});
+
+/* ---------- Game logic (same behavior as before) ---------- */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const scoreEl = document.getElementById('score');
+const levelEl = document.getElementById('level');
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const restartBtn = document.getElementById('restartBtn');
+const muteToggle = document.getElementById('muteToggle');
+const hideJoyBtn = document.getElementById('hideJoy');
+
+const joystick = document.getElementById('joystick');
+const joyBase = document.getElementById('joyBase');
+const joyKnob = document.getElementById('joyKnob');
+
+const flashDiv = document.getElementById('flash');
+const scareOverlay = document.getElementById('scareOverlay');
+const scareImg = document.getElementById('scareImg');
+
+let grid = 20;
+let box = Math.floor(400 / grid);
+let snake = [];
+let direction = "RIGHT";
+let food = null;
+let score = 0;
+let level = 1;
+let running = false;
+let paused = false;
+let gameInterval = null;
+let tickMs = 140;
+
+// Jumpscare config
+const SCARE_THRESHOLD = 3;     // trigger when score >= 3
+const SCARE_DISPLAY_MS = 4200; // display time before reload
+let prankTriggered = false;
+let muted = false;
+let userInteracted = false;
+
+// Unlock audio to satisfy autoplay rules (call on first user action)
+function unlockAudioOnInteraction(){
+  if (userInteracted) return;
+  userInteracted = true;
+  if (preloadedAudios.length > 0) {
+    const a = preloadedAudios[0];
+    a.muted = true;
+    a.play().then(()=> { a.pause(); a.muted = false; }).catch(()=>{});
+  }
+}
+
+// helpers
+function randomPos(){
+  let p;
+  do {
+    p = { x: Math.floor(Math.random()*grid), y: Math.floor(Math.random()*grid) };
+  } while (snake.some(s => s.x === p.x && s.y === p.y));
+  return p;
+}
+
+function updateLevel(){
+  let newLevel = 1;
+  if (score >= 12) newLevel = 3;
+  else if (score >= 5) newLevel = 2;
+
+  if (newLevel !== level) {
+    level = newLevel;
+    if (level === 1) grid = 20;
+    if (level === 2) grid = 25;
+    if (level === 3) grid = 30;
+    box = Math.floor(400 / grid);
+    snake = snake.map(s => ({
+      x: Math.max(0, Math.min(grid-1, s.x)),
+      y: Math.max(0, Math.min(grid-1, s.y))
+    }));
+    food = randomPos();
+  }
+  scoreEl.textContent = 'Score: ' + score;
+  levelEl.textContent = 'Level: ' + level;
+}
+
+function initGame(resetScore = true){
+  grid = 20;
+  box = Math.floor(400 / grid);
+  snake = [{ x: Math.floor(grid/2), y: Math.floor(grid/2) }];
+  direction = "RIGHT";
+  food = randomPos();
+  if (resetScore) score = 0;
+  level = 1;
+  updateLevel();
+  clearInterval(gameInterval);
+  running = false;
+  paused = false;
+  pauseBtn.disabled = true;
+  pauseBtn.textContent = 'Pause';
+  restartBtn.disabled = true;
+  startBtn.disabled = false;
+  prankTriggered = false;
+  scareOverlay.style.display = 'none';
+  flashDiv.style.display = 'none';
+  resetKnob();
+}
+
+function draw(){
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0,0, canvas.width, canvas.height);
+
+  // food
+  ctx.fillStyle = 'red';
+  ctx.fillRect(food.x * box, food.y * box, box, box);
+
+  // snake
+  for (let i = 0; i < snake.length; i++) {
+    ctx.fillStyle = i === 0 ? '#00aaff' : '#0077cc';
+    ctx.fillRect(snake[i].x * box, snake[i].y * box, box, box);
+  }
+
+  let head = { x: snake[0].x, y: snake[0].y };
+  if (direction === 'UP') head.y--;
+  if (direction === 'DOWN') head.y++;
+  if (direction === 'LEFT') head.x--;
+  if (direction === 'RIGHT') head.x++;
+
+  // eat
+  if (head.x === food.x && head.y === food.y) {
+    score++;
+    snake.unshift(head);
+    if (level === 3) {
+      const tail = snake[snake.length - 1];
+      snake.push({ x: tail.x, y: tail.y });
+    }
+    updateLevel();
+    food = randomPos();
+
+    // immediate jumpscare trigger if threshold reached
+    if (!prankTriggered && score >= SCARE_THRESHOLD) {
+      runScare();
+      return;
+    }
+  } else {
+    snake.unshift(head);
+    snake.pop();
+  }
+
+  // collisions
+  if (head.x < 0 || head.x >= grid || head.y < 0 || head.y >= grid ||
+      snake.slice(1).some(s => s.x === head.x && s.y === head.y)) {
+    clearInterval(gameInterval);
+    running = false;
+    pauseBtn.disabled = true;
+    restartBtn.disabled = false;
+    setTimeout(()=> {
+      if (confirm('Game Over! Bạn muốn chơi lại ngay bây giờ?')) {
+        initGame(true);
+        unlockAudioOnInteraction();
+        startGame();
+      }
+    }, 50);
+  }
+}
+
+// Start / pause / restart
+function startGame(){
+  if (running) return;
+  running = true;
+  paused = false;
+  pauseBtn.disabled = false;
+  restartBtn.disabled = false;
+  startBtn.disabled = true;
+  updateLevel();
+  pauseBtn.textContent = 'Pause';
+  clearInterval(gameInterval);
+  gameInterval = setInterval(draw, tickMs);
+}
+
+function pauseGame(){
+  if (!running) return;
+  if (!paused) {
+    clearInterval(gameInterval);
+    paused = true;
+    pauseBtn.textContent = 'Resume';
+  } else {
+    gameInterval = setInterval(draw, tickMs);
+    paused = false;
+    pauseBtn.textContent = 'Pause';
+  }
+}
+
+// Scare playback: prefer preloadedAudios; uses provided mp3 first
+function playRandomScream(){
+  if (preloadedAudios.length > 0) {
+    const idx = Math.floor(Math.random()*preloadedAudios.length);
+    const a = preloadedAudios[idx];
+    try { a.currentTime = 0; a.play().catch(()=>{}); } catch(e) { console.warn(e); }
+    return;
+  }
+  for (let s of screamSounds) {
+    if (/\.(mp3|ogg|wav)(\?|$)/i.test(s)) {
+      const a = new Audio(s);
+      try { a.play().catch(()=>{}); } catch(e){ console.warn(e); }
+      return;
+    }
+  }
+  console.warn('No playable audio available.');
+}
+
+// Run jumpscare immediately
+function runScare(){
+  prankTriggered = true;
+  const img = scareImages[Math.floor(Math.random()*scareImages.length)];
+  scareImg.src = img;
+
+  flashDiv.style.display = 'block';
+  setTimeout(()=> flashDiv.style.display = 'none', 200);
+
+  if(navigator.vibrate) navigator.vibrate([200,120,200]);
+
+  scareOverlay.style.display = 'flex';
+  if(!muted) playRandomScream();
+
+  setTimeout(()=> {
+    try{ preloadedAudios.forEach(a=>a.pause()); }catch(e){}
+    location.reload();
+  }, SCARE_DISPLAY_MS);
+}
+
+// Input handling: keyboard + joystick
+document.addEventListener('keydown', e => {
+  unlockAudioOnInteraction();
+  if (e.code === 'Space') {
+    if (running) pauseGame();
+  }
+  if (!running) return;
+  const key = e.key;
+  if ((key === 'ArrowUp' || key === 'w' || key === 'W') && direction !== 'DOWN') direction = 'UP';
+  if ((key === 'ArrowDown' || key === 's' || key === 'S') && direction !== 'UP') direction = 'DOWN';
+  if ((key === 'ArrowLeft' || key === 'a' || key === 'A') && direction !== 'RIGHT') direction = 'LEFT';
+  if ((key === 'ArrowRight' || key === 'd' || key === 'D') && direction !== 'LEFT') direction = 'RIGHT';
+});
+
+// Joystick implementation (pointer events)
+let activePointerId = null;
+let joyCenter = null;
+let maxRadius = 42; // pixels knob can move from center
+let deadZone = 10;  // minimal movement before changing direction
+
+function getElementCenter(el){
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width/2, y: r.top + r.height/2 };
+}
+function setKnobPosition(dx, dy){
+  const dist = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx);
+  const limited = Math.min(dist, maxRadius);
+  const px = Math.cos(angle)*limited;
+  const py = Math.sin(angle)*limited;
+  joyKnob.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+}
+function resetKnob(){
+  joyKnob.style.transform = 'translate(-50%,-50%)';
+  joystick.classList.remove('joy-active');
+  activePointerId = null;
+  joyCenter = null;
+}
+function angleToDir(angleRad){
+  const deg = angleRad * 180 / Math.PI;
+  if (deg >= -45 && deg <= 45) return 'RIGHT';
+  if (deg > 45 && deg < 135) return 'DOWN';
+  if (deg >= 135 || deg <= -135) return 'LEFT';
+  if (deg < -45 && deg > -135) return 'UP';
+  return null;
+}
+
+function onPointerDown(ev){
+  ev.preventDefault();
+  unlockAudioOnInteraction();
+  if (activePointerId !== null) return; // ignore other pointers
+  joystick.classList.add('joy-active');
+  activePointerId = ev.pointerId;
+  joyCenter = getElementCenter(joyBase);
+  try { joyBase.setPointerCapture(ev.pointerId); } catch(e){}
+  handlePointerMove(ev); // process initial down position
+}
+function handlePointerMove(ev){
+  if (activePointerId !== ev.pointerId) return;
+  ev.preventDefault();
+  const x = ev.clientX;
+  const y = ev.clientY;
+  const dx = x - joyCenter.x;
+  const dy = y - joyCenter.y;
+  setKnobPosition(dx, dy);
+  const dist = Math.hypot(dx, dy);
+  if (dist >= deadZone){
+    const dir = angleToDir(Math.atan2(dy, dx));
+    if (dir === 'UP' && direction !== 'DOWN') direction = 'UP';
+    if (dir === 'DOWN' && direction !== 'UP') direction = 'DOWN';
+    if (dir === 'LEFT' && direction !== 'RIGHT') direction = 'LEFT';
+    if (dir === 'RIGHT' && direction !== 'LEFT') direction = 'RIGHT';
+  }
+}
+function onPointerUp(ev){
+  if (activePointerId !== ev.pointerId) return;
+  try { joyBase.releasePointerCapture(ev.pointerId); } catch(e){}
+  resetKnob();
+}
+
+joyBase.addEventListener('pointerdown', onPointerDown, {passive:false});
+joyBase.addEventListener('pointermove', handlePointerMove, {passive:false});
+joyBase.addEventListener('pointerup', onPointerUp, {passive:false});
+joyBase.addEventListener('pointercancel', onPointerUp, {passive:false});
+joyBase.addEventListener('lostpointercapture', onPointerUp, {passive:false});
+
+// Buttons
+startBtn.addEventListener('click', ()=> { unlockAudioOnInteraction(); startGame(); });
+pauseBtn.addEventListener('click', ()=> pauseGame());
+restartBtn.addEventListener('click', ()=> {
+  unlockAudioOnInteraction();
+  initGame(true);
+  startGame();
+});
+muteToggle.addEventListener('click', ()=>{
+  muted = !muted;
+  muteToggle.textContent = muted ? '🔇' : '🔊';
+  if(muted) try{ preloadedAudios.forEach(a=>a.pause()); }catch(e){}
+});
+hideJoyBtn.addEventListener('click', ()=> {
+  if (joystick.style.display === 'none') {
+    joystick.style.display = 'flex';
+    hideJoyBtn.textContent = 'Hide joystick';
+  } else {
+    joystick.style.display = 'none';
+    hideJoyBtn.textContent = 'Show joystick';
+  }
+});
+
+// prevent arrow/space from scrolling page
+window.addEventListener("keydown", function(e) {
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"," "].indexOf(e.key) > -1) {
+    e.preventDefault();
+  }
+}, false);
+
+// init
+initGame(true);
+canvas.addEventListener('click', ()=> canvas.focus());
+
+</script>
+</body>
+</html>
